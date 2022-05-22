@@ -1,0 +1,338 @@
+/*####################################################################################################################################*/
+/*####################################################################################################################################*/
+
+                                                        /*ULTILITIES*/
+                            /*BIBLIOTECA DE FUNÇÕES UTILITÁRIAS E AUTOMAÇÕES DE ANÁLISES*/
+
+/*####################################################################################################################################*/
+/*CHECA FORMATO*/
+/*CHECA CHAVE*/
+/*ANÁLISES MÊS*/
+/*CASCATA DE CHAVES*/
+/*####################################################################################################################################*/
+
+/*--- GABRIEL COSTA*/
+/*####################################################################################################################################*/
+/*####################################################################################################################################*/
+/*####################################################################################################################################*/
+/*####################################################################################################################################*/
+
+/*ADICIONAR FEATURE PARA ESPECIFICAR TIPO DE FECHAMENTO */
+%MACRO MESES(MES_REF, NUM_MESES, BASE ,FECHAMENTO);
+
+        %LET MES = &MES_REF.;
+        %DO I = 1 %TO &NUM_MESES.;
+            /*FECHAMENTO HARD CODED*/
+            /* PARA BASE MENSAL --> REMOVA O ':'*/
+            /* PARA BASE DIÁRIA --> ADICIONE O ':' AO FINAL*/
+    /*######################################################*/
+        %IF &FECHAMENTO. = "MENSAL" %THEN
+        %DO;
+            &LIB..&BASE._&MES.
+            %PUT FECHAMENTO -> MENSAL;
+            %PUT &LIB..&BASE._&MES.;
+        %END;
+        %ELSE
+        %DO;
+            &LIB..&BASE._&MES.:
+            %PUT FECHAMENTO -> DIARIO;
+            %PUT &LIB..&BASE._&MES.:;
+        %END;
+
+    /*#######################################################*/
+
+         %IF %SUBSTR(&MES., 5, 2) = 01 %THEN
+        %DO ;
+           %LET MES = %EVAL(&MES. - 89);
+
+        %END;
+        %ELSE
+        %DO;
+             %LET MES = %EVAL(&MES. - 1);
+        %END;
+        %END;
+%MEND;
+
+/*####################################################################################################################################*/
+/*####################################################################################################################################*/
+/*####################################################################################################################################*/
+/*####################################################################################################################################*/
+                                      /*AUTOMAÇÃO DA ANÁLISE DE DATA QUALITY DOS CAMPOS*/
+
+/* ------> */ /*CHECA:*/
+/* ------> */ /*FORMATO DOS CAMPOS*/
+/* ------> */ /*VALORES NEGATIVOS EM CAMPOS NUMERICOS*/
+/* ------> */ /*VALORES ZERADOS EM CAMPO NUMERICOS*/
+
+/* ------> */ /*RETORNA:*/
+/* ------> */ /*PROC FREQ COMPLETO DE TODOS OS CAMPOS EM SEQUÊNCIA PARA AS FLAGS ACIMA*/
+/* ------> */ /*TABELA A PARTIR DO PROC FREQ GERADO PARA FÁCIL VISUALIZAÇÃO E EXPORT*/
+
+/* ------> */ /*CAMPOS:*/
+/* ------> */ /*DG_... -> FREQ DO CONTADOR DE DIGITOS PREENCHIDOS DO CAMPO*/
+/* ------> */ /*NEG_... -> CONTADOR DE REGISTROS COM VALORES NUMERICOS NEGATIVOS*/
+/* ------> */ /*ZERO_... -> CONTADOR DE REGISTROS PREENCHIDOS COM ZERO*/
+
+/*####################################################################################################################################*/
+/*DATA BASE_LOCAL;*/
+/* SET SAVEPROJ.DM_STATUS_ACORDO_V7;*/
+/*RUN;*/
+/**/
+/*%LET BASE = WORK.BASE_LOCAL;*/
+/*####################################################################################################################################*/
+
+%MACRO CHECA_FORMATO(BASE);
+    %LOCAL CAMPOS;
+    PROC CONTENTS DATA= &BASE. OUT = &BASE._NOMES (KEEP = NAME);
+    RUN;
+
+     PROC SQL NOPRINT;
+        SELECT name INTO :CAMPOS SEPARATED BY ' '
+         FROM &BASE._NOMES;
+    QUIT;
+    DATA CHECA_FORMATO;
+          SET &BASE.;
+
+          %DO R=1 %TO %SYSFUNC(COUNTW(&CAMPOS.));
+
+               IF MISSING(%SCAN(&CAMPOS.,&R.)) THEN DG_%SCAN(&CAMPOS.,&R.) = 'Missing';
+              ELSE DG_%SCAN(&CAMPOS.,&R.) = LENGTH(COMPRESS(PUT(%SCAN(&CAMPOS.,&R.), 32.), ' .,'));
+
+              IF VTYPE(%SCAN(&CAMPOS.,&R.)) = 'N' AND %SCAN(&CAMPOS.,&R.) NE . AND %SCAN(&CAMPOS.,&R.) LT 0 THEN NEG_%SCAN(&CAMPOS.,&R.) = 1;
+              ELSE NEG_%SCAN(&CAMPOS.,&R.) = 0;
+
+               IF VTYPE(%SCAN(&CAMPOS.,&R.)) = 'N' AND %SCAN(&CAMPOS.,&R.) NE . AND %SCAN(&CAMPOS.,&R.) EQ 0 THEN ZERO_%SCAN(&CAMPOS.,&R.) = 1;
+              ELSE ZERO_%SCAN(&CAMPOS.,&R.) = 0;
+
+              CHAR_%SCAN(&CAMPOS.,&R.) = COMPRESS(PUT(%SCAN(&CAMPOS.,&R.), 32.), ' .,');
+
+              /* VTYPE_%SCAN(&CAMPOS.,&R.) = VTYPE(%SCAN(&CAMPOS.,&R.));*/
+
+              /* CHAR_%SCAN(&CAMPOS.,&R.) = INPUT(%SCAN(&CAMPOS.,&R.), 8.);*/
+               /* INT_%SCAN(&CAMPOS.,&R.) = COMPRESS(PUT(%SCAN(&CAMPOS.,&R.), 32.), ' .,');*/
+
+          %END;
+    RUN;
+    ODS TABLE ONEWAYFREQS=TEMP;
+
+     PROC FREQ DATA=CHECA_FORMATO;
+    TABLES DG_: NEG_: ZERO_:;
+    RUN;
+
+    DATA SAVEPROJ.RELATORIO_FORMATO;
+        LENGTH VARIABLE $32. VARIABLE_VALUE $50.;
+        SET TEMP;
+        VARIABLE = SCAN(TABLE, 2);
+        VARIABLE_VALUE=STRIP(TRIM(VVALUEX(VARIABLE)));
+        KEEP VARIABLE VARIABLE_VALUE FREQUENCY PERCENT CUM:;
+        LABEL VARIABLE = 'Variavel'
+        VARIABLE_VALUE = 'Digitos'
+    RUN;
+
+    PROC PRINT DATA=SAVEPROJ.RELATORIO_FORMATO(OBS=20) LABEL;
+    RUN;
+
+%MEND;
+
+/*####################################################################################################################################*/
+/*####################################################################################################################################*/
+/*####################################################################################################################################*/
+/*####################################################################################################################################*/
+
+                                             /*AUTOMAÇÃO DA ANÁLISE DOS NÍVEIS DE CHAVE*/
+
+/* ------> */ /*RETORNA O DATASET CRUZADO NO NÍVEL ESPECIFICADO, JÁ COM AS FLAGS REFERENTES AOS NÍVEIS DA CHAVE*/
+/* ------> */ /*RETORNA OS DATASETS REFERENTES AOS REGISTROS ACHADOS EM CADA NÍVEL*/
+
+/*####################################################################################################################################*/
+/*####################################################################################################################################*/
+/*%LET BASE1 = SAVEPROJ.ESTOQUE_202112_2;*/
+/*%LET BASE2 = SAVEPROJ.PAG_AMOSTRA_202112_2;*/
+
+/*%LET BASE1 = SAVEPROJ.ESTOQUE_202112_2;*/
+/*%LET BASE2 = SAVEPROJ.PAG_AMOSTRA_202112_2;*/
+/**/
+/**/
+/*%LET PREFIXO1 = EST;*/
+/*%LET PREFIXO2 = PAG;*/
+
+/*INPUT DAS CHAVES ESPECÍFICAS A SEREM ANALISADAS*/
+/*ESCREVA-AS SEPARADAS POR VÍRGULA EM ORDEM IGUAL E -----> HIERÁRQUICA<-----*/
+
+/*%LET CHAVES1 = CPF_CNPJ NR_CONTRATO CODCARTEIRA;*/
+/*%LET CHAVES2 = CD_CPF_CNPJ NR_CONTRATO CD_CARTEIRA;*/
+/*####################################################################################################################################*/
+
+%MACRO GERA_CHAVE(CHAVES1, CHAVES2, PREFIXO1, PREFIXO2, TIPO, N, BASE);
+
+      /*--> RECONHECER CAMPOS IGUAIS EM T1 E T2 E DIFERENCIA-LOS DE ACORDO COM O NOME DA BASE?? EM ULTIMO CASO CRIAR VAR PARA O PREFIXO ( ) - NECESSÁRIO!*/
+      /* AQUI*/
+
+      %IF &TIPO. = 'SELECT' %THEN
+
+/*####################################################################################################################################*/
+      /* GERA CODIGO DO COMANDO SELECT*/
+      %DO;
+
+           %DO I = 1 %TO %SYSFUNC(COUNTW(&CHAVES1.));
+              %PUT &I.;
+              %PUT NUMERO DE CHAVES..... %SYSFUNC(COUNTW(&CHAVES1.));
+
+              %PUT ELEMENTO DA CHAVE1 ..... &PREFIXO1..%SCAN(&CHAVES1.,&I.) AS %SCAN(&CHAVES1.,&I.)_&PREFIXO1.;
+              %PUT ELEMENTO DA CHAVE2 ..... &PREFIXO2..%SCAN(&CHAVES2.,&I.) AS %SCAN(&CHAVES2.,&I.)_&PREFIXO2.;
+
+               &PREFIXO1..%SCAN(&CHAVES1.,&I.) AS %SCAN(&CHAVES1.,&I.)_&PREFIXO1.,
+              &PREFIXO2..%SCAN(&CHAVES2.,&I.) AS %SCAN(&CHAVES2.,&I.)_&PREFIXO2.,
+
+      %END;
+
+      %END;
+
+      %ELSE %IF &TIPO. = 'JOIN' %THEN
+/*####################################################################################################################################*/
+      /* GERA CODIGO DO DAS CHAVES DO JOIN*/
+      %DO;
+
+            %DO I = 1 %TO &N.;
+               %IF &I. = &N. %THEN
+
+                %DO;
+
+                 %PUT ELEMENTO FINAL DA CHAVE1 NO JOIN ..... &PREFIXO1..%SCAN(&CHAVES1.,&I.) = &PREFIXO2..%SCAN(&CHAVES2.,&I.);
+                &PREFIXO1..%SCAN(&CHAVES1.,&I.) = &PREFIXO2..%SCAN(&CHAVES2.,&I.)
+
+                %END;
+
+                 /* CONDICIONAL EM LOOP PARA ADICIONAR ANDs ITERATIVAMENTE*/
+                %ELSE
+                %DO;
+
+                     %PUT ELEMENTO DA CHAVE1 NO JOIN ..... &PREFIXO1..%SCAN(&CHAVES1.,&I.) = &PREFIXO2..%SCAN(&CHAVES2.,&I.) AND;
+                    &PREFIXO1..%SCAN(&CHAVES1.,&I.) = &PREFIXO2..%SCAN(&CHAVES2.,&I.) AND
+                %END;
+            %END;
+
+      %END;
+
+/*####################################################################################################################################*/
+      /* SUBSTITUTO DO OPERADOR * : EPECIFICA TODOS OS CAMPOS DA TABELA NO SELECT */
+
+       %ELSE %IF &TIPO. = '*' %THEN
+
+            %DO ;
+                %LOCAL RENAME;
+
+                %LET GET_NAMES = %SYSFUNC(DOSUBL(%NRSTR(
+
+                 PROC CONTENTS DATA= &BASE. OUT = &BASE._NOMES (KEEP = NAME);
+                RUN;
+
+                 PROC SQL NOPRINT;
+                SELECT name INTO :RENAME SEPARATED BY ' '
+                FROM &BASE._NOMES;
+                QUIT;
+
+                )));
+
+                %DO R = 1 %TO %SYSFUNC(COUNTW(&RENAME.));
+                    %IF &N. = 1 %THEN
+                    %DO;
+                        %PUT &PREFIXO1..%SCAN(&RENAME.,&R.),;
+                        &PREFIXO1..%SCAN(&RENAME.,&R.),
+                    %END;
+                    %ELSE %IF &N. = 2 %THEN
+
+                    %DO;
+                          %PUT &PREFIXO2..%SCAN(&RENAME.,&R.),;
+                          &PREFIXO2..%SCAN(&RENAME.,&R.),
+                    %END;
+                    %ELSE %IF &N. = 3 %THEN
+
+                    %DO;
+
+                          %PUT %SYSFUNC(SUBSTR(%SCAN(&RENAME.,&R.), 1,5));
+
+                          %IF %SYSFUNC(SUBSTR(%SCAN(&RENAME.,&R.), 1,5)) = FLAG_ %THEN
+
+                          %DO;
+
+                              &PREFIXO1..%SCAN(&RENAME.,&R.),
+
+                          %END;
+                    %END;
+
+                %END;
+          %END;
+
+          %ELSE
+          %DO;
+                %PUT WARNING: TIPO DE GERAÇAO DE CHAVE INVALIDO... ESCOLHAS SUPORTDAS... "JOIN" E "SELECT".......;
+           %END;
+%MEND;
+
+
+
+
+%MACRO ANALISE_CASCATA(BASE1, BASE2, CHAVES1, CHAVES2, PREFIXO1, PREFIXO2);
+        %DO N = 1 %TO %EVAL(%SYSFUNC(COUNTW(&CHAVES1.)));
+
+              /*INICIALIZANDO A CASCATA COM O PRIMEIRO JOIN COM A BASE ORIGINAL*/
+              %IF &N. = 1 %THEN
+
+              %DO;
+                   PROC SQL;
+
+                          CREATE TABLE BASE_%SCAN(&CHAVES1., 1) AS SELECT
+
+                           %GERA_CHAVE(&CHAVES1., &CHAVES2., &PREFIXO1., &PREFIXO2., 'SELECT')
+
+                           %GERA_CHAVE(&CHAVES1., &CHAVES2., &PREFIXO1., &PREFIXO2., '*', 1, BASE = &BASE1.)
+                          %GERA_CHAVE(&CHAVES1., &CHAVES2., &PREFIXO1., &PREFIXO2., '*', 2, BASE = &BASE2.)
+
+                          /* %GERA_CHAVE(&CHAVES1., &CHAVES2., &PREFIXO1., &PREFIXO2., 'PREFIXADOR')*/
+
+                           CASE WHEN &PREFIXO2..%SCAN(&CHAVES2., 1) NE '' THEN 1 ELSE 0 END AS FLAG_%SCAN(&CHAVES2., 1)
+                          FROM &BASE1. AS &PREFIXO1. LEFT JOIN &BASE2. AS &PREFIXO2.
+
+                           ON
+
+                           &PREFIXO1..%SCAN(&CHAVES1., 1) = &PREFIXO2..%SCAN(&CHAVES2., 1);
+                   QUIT;
+                %END;
+
+                /*ITERATIVE POINTS :*/
+                /**/
+                /*-> "TABLE NAME" - ITERA PELAS CHAVES*/
+                /*-> "FROM BASE1" - ITERA TAMBEM PELAS CHAVES*/
+                /*-> "FLAG_" - ITERA PELAS TAMBEM CHAVES*/
+                /*-> "JOIN KEYS" - ITERA PELA MACRO*/
+
+                 %ELSE
+                 %DO;
+                      %LET NIVEL = %SCAN(&CHAVES1.,%EVAL(&N. + 0) );
+                      %PUT NIVEL.... &NIVEL.;
+                      PROC SQL;
+
+                             CREATE TABLE BASE_&NIVEL. AS SELECT
+
+                             %GERA_CHAVE(&CHAVES1., &CHAVES2., &PREFIXO1., &PREFIXO2., 'SELECT')
+
+                            /* %GERA_CHAVE(&CHAVES1., &CHAVES2., &PREFIXO1., &PREFIXO2., 'PREFIXADOR', BASE = &BASE2.)*/
+
+                             %GERA_CHAVE(&CHAVES1., &CHAVES2., &PREFIXO1., &PREFIXO2., '*', 1, BASE = &BASE1.)
+                            %GERA_CHAVE(&CHAVES1., &CHAVES2., &PREFIXO1., &PREFIXO2., '*', 2, BASE = &BASE2.)
+                            %GERA_CHAVE(&CHAVES1., &CHAVES2., &PREFIXO1., &PREFIXO2., '*', 3, BASE = BASE_%SCAN(&CHAVES1., %EVAL(&N. - 1)))
+
+                            CASE WHEN &PREFIXO2..%SCAN(&CHAVES2., 1) NE '' THEN 1 ELSE 0 END AS FLAG_%SCAN(&CHAVES2., %EVAL(&N. + 0))
+                            %PUT BASE..... BASE_%SCAN(&CHAVES1., %EVAL(&N. - 1));
+                            FROM BASE_%SCAN(&CHAVES1., %EVAL(&N. - 1)) AS &PREFIXO1. LEFT JOIN &BASE2. AS &PREFIXO2.
+                            ON
+                            %PUT N ... &N.;
+                            %PUT NMAX ... %SYSFUNC(COUNTW(&CHAVES1.));
+
+                            %GERA_CHAVE(&CHAVES1., &CHAVES2., &PREFIXO1., &PREFIXO2., 'JOIN', &N.)
+                           ;
+                        QUIT;
+                    %END;
+            %END;
+%MEND;
